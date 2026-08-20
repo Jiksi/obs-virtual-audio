@@ -1,0 +1,17 @@
+.vs/
+.vscode/
+build/
+build_*/
+out/
+cmake-build-*/
+CMakeUserPresets.json
+*.user
+*.suo
+*.VC.db
+*.VC.VC.opendb
+*.obj
+*.pdb
+*.ilk
+*.exp
+*.lib
+*.dll
