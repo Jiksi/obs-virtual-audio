@@ -1,7 +1,15 @@
 #include <obs-module.h>
 
+#include <memory>
+
+#include "audio-capture.hpp"
+
 OBS_DECLARE_MODULE()
 OBS_MODULE_USE_DEFAULT_LOCALE("obs-virtual-audio", "en-US")
+
+namespace {
+std::unique_ptr<AudioCapture> g_audio_capture;
+}
 
 MODULE_EXPORT const char *obs_module_description(void)
 {
@@ -11,10 +19,23 @@ MODULE_EXPORT const char *obs_module_description(void)
 bool obs_module_load(void)
 {
     blog(LOG_INFO, "[obs-virtual-audio] loaded (version %s)", PLUGIN_VERSION);
+
+    g_audio_capture = std::make_unique<AudioCapture>();
+    if (!g_audio_capture->start()) {
+        blog(LOG_ERROR, "[obs-virtual-audio] failed to start audio capture");
+        g_audio_capture.reset();
+        return false;
+    }
+
     return true;
 }
 
 void obs_module_unload(void)
 {
+    if (g_audio_capture) {
+        g_audio_capture->stop();
+        g_audio_capture.reset();
+    }
+
     blog(LOG_INFO, "[obs-virtual-audio] unloaded");
 }
