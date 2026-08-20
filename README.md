@@ -24,10 +24,59 @@ OBS sources
    -> TikTok Studio
 ```
 
-## Development baseline
+## Current status
 
-The project will follow the official OBS plugin template conventions for CMake and Windows builds. The initial Windows development target is Visual Studio 2022 with CMake.
+The plugin currently captures OBS mix 1 as 48 kHz stereo float audio and writes it into a lock-free SPSC ring buffer. WASAPI output has not been implemented yet.
 
-## Status
+## Windows build
 
-Bootstrap repository initialized. Plugin source and WASAPI implementation will be added next.
+The repository includes `scripts/build-windows.ps1`. It uses the official OBS plugin template build infrastructure in a temporary `.build` workspace, so you do not need to manually prepare a libobs SDK.
+
+Requirements:
+
+- Windows 10/11 x64
+- Visual Studio 2022 with **Desktop development with C++**
+- CMake available in `PATH`
+- Git available in `PATH`
+- PowerShell 7.2+
+
+From PowerShell 7 at the repository root:
+
+```powershell
+pwsh -File .\scripts\build-windows.ps1
+```
+
+For a Release build:
+
+```powershell
+pwsh -File .\scripts\build-windows.ps1 -Configuration Release
+```
+
+The first build downloads the official OBS plugin template and its build dependencies. Build output is copied to:
+
+```text
+release/RelWithDebInfo/
+```
+
+The plugin DLL should be under:
+
+```text
+release/RelWithDebInfo/obs-plugins/64bit/obs-virtual-audio.dll
+```
+
+## Smoke test in OBS
+
+After building, copy the generated plugin layout into your OBS Studio installation (or copy the DLL and data folders to their matching OBS plugin locations), then start OBS Studio.
+
+Open **Help -> Log Files -> View Current Log** and search for:
+
+```text
+[obs-virtual-audio] loaded (version 0.1.0)
+[obs-virtual-audio] audio capture started: mix=0, 48000 Hz, stereo float
+```
+
+If those messages appear and OBS remains stable while audio sources are active, the capture-stage smoke test is successful.
+
+## Next milestone
+
+Implement a WASAPI render worker that reads the ring buffer and sends the captured audio to a playback endpoint such as `CABLE Input (VB-Audio Virtual Cable)`.
