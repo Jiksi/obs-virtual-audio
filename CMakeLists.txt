@@ -10,6 +10,8 @@ find_package(libobs REQUIRED)
 
 add_library(${PROJECT_NAME} MODULE
     src/plugin-main.cpp
+    src/audio-capture.cpp
+    src/audio-ring-buffer.cpp
 )
 
 target_link_libraries(${PROJECT_NAME} PRIVATE OBS::libobs)
