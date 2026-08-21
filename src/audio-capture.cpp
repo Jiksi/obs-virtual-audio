@@ -59,6 +59,10 @@ uint64_t AudioCapture::dropped_samples() const noexcept
 
 size_t AudioCapture::read(float *samples, size_t sample_count) noexcept
 {
+    const size_t stale_samples = ring_buffer_.trim_to(kMaxBufferedSamples);
+    if (stale_samples > 0)
+        dropped_samples_.fetch_add(stale_samples, std::memory_order_relaxed);
+
     return ring_buffer_.read(samples, sample_count);
 }
 

@@ -79,12 +79,39 @@ bool test_clear()
            expect(output == replacement, "only post-clear samples are returned");
 }
 
+bool test_latency_bound_under_clock_skew()
+{
+    constexpr size_t channels = 2;
+    constexpr size_t sample_rate = 48000;
+    constexpr size_t producer_samples_per_tick = 480 * channels;
+    constexpr size_t consumer_samples_per_tick = producer_samples_per_tick - 2;
+    constexpr size_t max_buffered_samples = sample_rate * channels / 20; // 50 ms
+    constexpr size_t simulation_ticks = 48000;                            // 8 minutes
+
+    AudioRingBuffer buffer(sample_rate * channels * 2);
+    std::array<float, producer_samples_per_tick> input{};
+    std::array<float, consumer_samples_per_tick> output{};
+    size_t discarded_samples = 0;
+
+    for (size_t tick = 0; tick < simulation_ticks; ++tick) {
+        buffer.write(input.data(), input.size());
+        discarded_samples += buffer.trim_to(max_buffered_samples);
+        buffer.read(output.data(), output.size());
+    }
+
+    const size_t latency_ms = buffer.available() * 1000 / (sample_rate * channels);
+    std::cerr << "Observed simulated queue latency: " << latency_ms << " ms\n";
+    return expect(discarded_samples > 0, "clock skew triggers stale-sample trimming") &&
+           expect(buffer.available() <= max_buffered_samples,
+                  "clock skew cannot grow the queue beyond the latency bound");
+}
+
 } // namespace
 
 int main()
 {
     const bool passed = test_empty_and_invalid_operations() && test_fifo_and_capacity_limit() && test_wraparound() &&
-                        test_clear();
+                        test_clear() && test_latency_bound_under_clock_skew();
 
     if (!passed)
         return EXIT_FAILURE;

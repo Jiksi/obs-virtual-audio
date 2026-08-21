@@ -13,6 +13,7 @@ public:
 
     [[nodiscard]] size_t available() const noexcept;
     [[nodiscard]] size_t capacity() const noexcept;
+    size_t trim_to(size_t max_samples) noexcept;
     void clear() noexcept;
 
 private:

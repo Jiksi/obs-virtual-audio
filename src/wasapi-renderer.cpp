@@ -398,6 +398,7 @@ void WasapiRenderer::run() noexcept
                 return false;
             }
 
+            capture_.discard_buffered_audio();
             result = audio_client->Start();
             if (FAILED(result)) {
                 log_hresult("starting the WASAPI render stream", result);

@@ -26,7 +26,7 @@ OBS sources
 
 ## Current status
 
-The plugin captures OBS mix 1 as 48 kHz stereo float audio and sends it to a configurable Windows playback device. On first run it automatically selects the first active device whose name contains `CABLE Input`. The WASAPI worker writes silence when capture data is temporarily unavailable and automatically reconnects to the selected endpoint after device removal or other WASAPI failures. Retry delays increase from 1 second to a maximum of 10 seconds.
+The plugin captures OBS mix 1 as 48 kHz stereo float audio and sends it to a configurable Windows playback device. On first run it automatically selects the first active device whose name contains `CABLE Input`. The WASAPI worker writes silence when capture data is temporarily unavailable, caps queued audio at 50 ms to prevent clock drift from accumulating latency, and automatically reconnects to the selected endpoint after device removal or other WASAPI failures. Retry delays increase from 1 second to a maximum of 10 seconds.
 
 ## Windows build
 

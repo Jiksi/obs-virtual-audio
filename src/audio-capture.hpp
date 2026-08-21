@@ -13,6 +13,7 @@ public:
     static constexpr uint32_t kSampleRate = 48000;
     static constexpr size_t kChannels = 2;
     static constexpr size_t kMixIndex = 0;
+    static constexpr size_t kMaxBufferedSamples = kSampleRate * kChannels / 20; // 50 ms
 
     AudioCapture();
     ~AudioCapture();

@@ -64,6 +64,23 @@ size_t AudioRingBuffer::read(float *samples, size_t sample_count) noexcept
     return to_read;
 }
 
+size_t AudioRingBuffer::trim_to(size_t max_samples) noexcept
+{
+    if (buffer_.size() < 2)
+        return 0;
+
+    size_t read = read_pos_.load(std::memory_order_relaxed);
+    const size_t write = write_pos_.load(std::memory_order_acquire);
+    const size_t used = write >= read ? write - read : buffer_.size() - read + write;
+    if (used <= max_samples)
+        return 0;
+
+    const size_t discarded = used - max_samples;
+    read = (read + discarded) % buffer_.size();
+    read_pos_.store(read, std::memory_order_release);
+    return discarded;
+}
+
 void AudioRingBuffer::clear() noexcept
 {
     const size_t write = write_pos_.load(std::memory_order_acquire);
