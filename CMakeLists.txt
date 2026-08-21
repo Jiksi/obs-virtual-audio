@@ -7,16 +7,21 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
 find_package(libobs REQUIRED)
+find_package(obs-frontend-api REQUIRED)
+find_package(Qt6 REQUIRED COMPONENTS Widgets)
 
 add_library(${PROJECT_NAME} MODULE
     src/plugin-main.cpp
     src/audio-capture.cpp
     src/audio-ring-buffer.cpp
     src/wasapi-renderer.cpp
+    src/settings-dialog.cpp
 )
 
 target_link_libraries(${PROJECT_NAME} PRIVATE
     OBS::libobs
+    OBS::obs-frontend-api
+    Qt6::Widgets
     ole32
     uuid
 )

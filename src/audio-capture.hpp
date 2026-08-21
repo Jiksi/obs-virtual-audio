@@ -28,6 +28,7 @@ public:
     [[nodiscard]] uint64_t dropped_samples() const noexcept;
 
     size_t read(float *samples, size_t sample_count) noexcept;
+    void discard_buffered_audio() noexcept;
 
 private:
     static void raw_audio_callback(void *param, size_t mix_idx, audio_data *data);

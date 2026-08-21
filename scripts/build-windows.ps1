@@ -87,9 +87,6 @@ include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/common/bootstrap.cmake" NO_POLICY_SCO
 
 project(${_name} VERSION ${_version} LANGUAGES C CXX)
 
-option(ENABLE_FRONTEND_API "Use obs-frontend-api for UI functionality" OFF)
-option(ENABLE_QT "Use Qt functionality" OFF)
-
 include(compilerconfig)
 include(defaults)
 include(helpers)
@@ -97,7 +94,12 @@ include(helpers)
 add_library(${CMAKE_PROJECT_NAME} MODULE)
 
 find_package(libobs REQUIRED)
-target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE OBS::libobs ole32 uuid)
+find_package(obs-frontend-api REQUIRED)
+find_package(Qt6 REQUIRED COMPONENTS Widgets)
+target_link_libraries(
+  ${CMAKE_PROJECT_NAME}
+  PRIVATE OBS::libobs OBS::obs-frontend-api Qt6::Widgets ole32 uuid
+)
 
 target_sources(
   ${CMAKE_PROJECT_NAME}
@@ -106,6 +108,7 @@ target_sources(
     src/audio-capture.cpp
     src/audio-ring-buffer.cpp
     src/wasapi-renderer.cpp
+    src/settings-dialog.cpp
 )
 
 target_compile_features(${CMAKE_PROJECT_NAME} PRIVATE cxx_std_17)

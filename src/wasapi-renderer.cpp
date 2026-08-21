@@ -13,6 +13,7 @@
 #include <algorithm>
 #include <cwctype>
 #include <string>
+#include <utility>
 
 using Microsoft::WRL::ComPtr;
 
@@ -37,6 +38,22 @@ std::string utf8_from_wide(const wchar_t *value)
     return result;
 }
 
+std::wstring wide_from_utf8(const std::string &value)
+{
+    if (value.empty())
+        return {};
+
+    const int size = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, value.c_str(), -1,
+                                         nullptr, 0);
+    if (size <= 1)
+        return {};
+
+    std::wstring result(static_cast<size_t>(size), L'\0');
+    MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, value.c_str(), -1, result.data(), size);
+    result.pop_back();
+    return result;
+}
+
 bool contains_case_insensitive(const std::wstring &value, const std::wstring &needle)
 {
     std::wstring folded_value(value.size(), L'\0');
@@ -56,9 +73,46 @@ void log_hresult(const char *operation, HRESULT result)
          static_cast<unsigned long>(result));
 }
 
-HRESULT find_cable_input(IMMDeviceEnumerator *enumerator, ComPtr<IMMDevice> &device,
-                         std::string &friendly_name)
+HRESULT get_device_details(IMMDevice *device, WasapiDevice &details)
 {
+    LPWSTR device_id = nullptr;
+    HRESULT result = device->GetId(&device_id);
+    if (FAILED(result))
+        return result;
+
+    details.id = utf8_from_wide(device_id);
+    CoTaskMemFree(device_id);
+
+    ComPtr<IPropertyStore> properties;
+    result = device->OpenPropertyStore(STGM_READ, &properties);
+    if (FAILED(result))
+        return result;
+
+    PROPVARIANT name;
+    PropVariantInit(&name);
+    result = properties->GetValue(kDeviceFriendlyName, &name);
+    if (SUCCEEDED(result) && name.vt == VT_LPWSTR && name.pwszVal)
+        details.name = utf8_from_wide(name.pwszVal);
+    else if (SUCCEEDED(result))
+        result = E_UNEXPECTED;
+    PropVariantClear(&name);
+    return result;
+}
+
+HRESULT find_render_device(IMMDeviceEnumerator *enumerator, const std::string &target_device_id,
+                           ComPtr<IMMDevice> &device, WasapiDevice &details)
+{
+    if (!target_device_id.empty()) {
+        const std::wstring wide_id = wide_from_utf8(target_device_id);
+        if (wide_id.empty())
+            return E_INVALIDARG;
+
+        HRESULT result = enumerator->GetDevice(wide_id.c_str(), &device);
+        if (FAILED(result))
+            return result;
+        return get_device_details(device.Get(), details);
+    }
+
     ComPtr<IMMDeviceCollection> devices;
     HRESULT result = enumerator->EnumAudioEndpoints(eRender, DEVICE_STATE_ACTIVE, &devices);
     if (FAILED(result))
@@ -75,30 +129,24 @@ HRESULT find_cable_input(IMMDeviceEnumerator *enumerator, ComPtr<IMMDevice> &dev
         if (FAILED(result))
             continue;
 
-        ComPtr<IPropertyStore> properties;
-        result = candidate->OpenPropertyStore(STGM_READ, &properties);
-        if (FAILED(result))
-            continue;
-
-        PROPVARIANT name;
-        PropVariantInit(&name);
-        result = properties->GetValue(kDeviceFriendlyName, &name);
-        if (SUCCEEDED(result) && name.vt == VT_LPWSTR && name.pwszVal &&
-            contains_case_insensitive(name.pwszVal, kTargetDeviceName)) {
-            friendly_name = utf8_from_wide(name.pwszVal);
+        WasapiDevice candidate_details;
+        result = get_device_details(candidate.Get(), candidate_details);
+        if (SUCCEEDED(result) &&
+            contains_case_insensitive(wide_from_utf8(candidate_details.name), kTargetDeviceName)) {
+            details = std::move(candidate_details);
             device = std::move(candidate);
-            PropVariantClear(&name);
             return S_OK;
         }
-
-        PropVariantClear(&name);
     }
 
     return HRESULT_FROM_WIN32(ERROR_NOT_FOUND);
 }
 } // namespace
 
-WasapiRenderer::WasapiRenderer(AudioCapture &capture) : capture_(capture) {}
+WasapiRenderer::WasapiRenderer(AudioCapture &capture, std::string target_device_id)
+    : capture_(capture), target_device_id_(std::move(target_device_id))
+{
+}
 
 WasapiRenderer::~WasapiRenderer()
 {
@@ -177,6 +225,59 @@ uint64_t WasapiRenderer::underrun_frames() const noexcept
     return underrun_frames_.load(std::memory_order_acquire);
 }
 
+const std::string &WasapiRenderer::active_device_id() const noexcept
+{
+    return active_device_id_;
+}
+
+const std::string &WasapiRenderer::active_device_name() const noexcept
+{
+    return active_device_name_;
+}
+
+std::vector<WasapiDevice> WasapiRenderer::enumerate_devices()
+{
+    const HRESULT com_result = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+    const bool owns_com = SUCCEEDED(com_result);
+    if (FAILED(com_result) && com_result != RPC_E_CHANGED_MODE) {
+        log_hresult("CoInitializeEx while enumerating devices", com_result);
+        return {};
+    }
+
+    std::vector<WasapiDevice> result_devices;
+    ComPtr<IMMDeviceEnumerator> enumerator;
+    HRESULT result = CoCreateInstance(__uuidof(MMDeviceEnumerator), nullptr, CLSCTX_ALL,
+                                      IID_PPV_ARGS(&enumerator));
+    if (SUCCEEDED(result)) {
+        ComPtr<IMMDeviceCollection> devices;
+        result = enumerator->EnumAudioEndpoints(eRender, DEVICE_STATE_ACTIVE, &devices);
+        UINT count = 0;
+        if (SUCCEEDED(result))
+            result = devices->GetCount(&count);
+
+        for (UINT index = 0; SUCCEEDED(result) && index < count; ++index) {
+            ComPtr<IMMDevice> device;
+            if (FAILED(devices->Item(index, &device)))
+                continue;
+
+            WasapiDevice details;
+            if (SUCCEEDED(get_device_details(device.Get(), details)))
+                result_devices.push_back(std::move(details));
+        }
+    }
+
+    if (FAILED(result))
+        log_hresult("enumerating playback devices", result);
+    if (owns_com)
+        CoUninitialize();
+
+    std::sort(result_devices.begin(), result_devices.end(),
+              [](const WasapiDevice &left, const WasapiDevice &right) {
+                  return left.name < right.name;
+              });
+    return result_devices;
+}
+
 void WasapiRenderer::report_initialization(bool succeeded) noexcept
 {
     {
@@ -210,12 +311,15 @@ void WasapiRenderer::run() noexcept
         }
 
         ComPtr<IMMDevice> device;
-        std::string friendly_name;
-        result = find_cable_input(enumerator.Get(), device, friendly_name);
+        WasapiDevice device_details;
+        result = find_render_device(enumerator.Get(), target_device_id_, device, device_details);
         if (FAILED(result)) {
-            blog(LOG_ERROR,
-                 "[obs-virtual-audio] no active playback device containing '%ls' was found",
-                 kTargetDeviceName);
+            if (target_device_id_.empty())
+                blog(LOG_ERROR,
+                     "[obs-virtual-audio] no active playback device containing '%ls' was found",
+                     kTargetDeviceName);
+            else
+                blog(LOG_ERROR, "[obs-virtual-audio] configured playback device is unavailable");
             return false;
         }
 
@@ -287,8 +391,10 @@ void WasapiRenderer::run() noexcept
             return false;
         }
 
+        active_device_id_ = std::move(device_details.id);
+        active_device_name_ = std::move(device_details.name);
         blog(LOG_INFO, "[obs-virtual-audio] WASAPI output started: %s, %u Hz, stereo float",
-             friendly_name.c_str(), AudioCapture::kSampleRate);
+             active_device_name_.c_str(), AudioCapture::kSampleRate);
         report_initialization(true);
         initialization_reported = true;
 

@@ -4,13 +4,20 @@
 #include <condition_variable>
 #include <cstdint>
 #include <mutex>
+#include <string>
 #include <thread>
+#include <vector>
 
 class AudioCapture;
 
+struct WasapiDevice {
+    std::string id;
+    std::string name;
+};
+
 class WasapiRenderer {
 public:
-    explicit WasapiRenderer(AudioCapture &capture);
+    WasapiRenderer(AudioCapture &capture, std::string target_device_id = {});
     ~WasapiRenderer();
 
     WasapiRenderer(const WasapiRenderer &) = delete;
@@ -22,12 +29,19 @@ public:
     [[nodiscard]] bool running() const noexcept;
     [[nodiscard]] uint64_t rendered_frames() const noexcept;
     [[nodiscard]] uint64_t underrun_frames() const noexcept;
+    [[nodiscard]] const std::string &active_device_id() const noexcept;
+    [[nodiscard]] const std::string &active_device_name() const noexcept;
+
+    [[nodiscard]] static std::vector<WasapiDevice> enumerate_devices();
 
 private:
     void run() noexcept;
     void report_initialization(bool succeeded) noexcept;
 
     AudioCapture &capture_;
+    std::string target_device_id_;
+    std::string active_device_id_;
+    std::string active_device_name_;
     void *stop_event_ = nullptr;
     void *audio_event_ = nullptr;
     std::thread thread_;

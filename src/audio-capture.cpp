@@ -62,6 +62,11 @@ size_t AudioCapture::read(float *samples, size_t sample_count) noexcept
     return ring_buffer_.read(samples, sample_count);
 }
 
+void AudioCapture::discard_buffered_audio() noexcept
+{
+    ring_buffer_.clear();
+}
+
 void AudioCapture::raw_audio_callback(void *param, size_t mix_idx, audio_data *data)
 {
     if (!param)
