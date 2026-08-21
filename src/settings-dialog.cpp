@@ -12,18 +12,17 @@
 #include <QLabel>
 #include <QMessageBox>
 #include <QPushButton>
-#include <QVariant>
+#include <QTimer>
 #include <QVBoxLayout>
+#include <QVariant>
 
 namespace {
-QString text(const char *key)
-{
-    return QString::fromUtf8(obs_module_text(key));
-}
+QString text(const char *key) { return QString::fromUtf8(obs_module_text(key)); }
 } // namespace
 
 void show_settings_dialog(QWidget *parent, const std::string &active_device_id,
-                          const ApplyDeviceCallback &apply_device)
+                          const ApplyDeviceCallback &apply_device,
+                          const RendererStateCallback &renderer_state)
 {
     QDialog dialog(parent);
     dialog.setWindowTitle(text("SettingsTitle"));
@@ -46,18 +45,34 @@ void show_settings_dialog(QWidget *parent, const std::string &active_device_id,
     auto *status = new QLabel(&dialog);
     layout->addWidget(status);
 
-    auto *buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel |
-                                             QDialogButtonBox::Apply,
-                                         &dialog);
+    auto *buttons = new QDialogButtonBox(
+        QDialogButtonBox::Ok | QDialogButtonBox::Cancel | QDialogButtonBox::Apply, &dialog);
     layout->addWidget(buttons);
 
     std::string selected_device_id = active_device_id;
 
+    const auto update_status = [&]() {
+        switch (renderer_state()) {
+        case WasapiRendererState::connecting:
+            status->setText(text("StatusConnecting"));
+            break;
+        case WasapiRendererState::connected:
+            status->setText(text("StatusConnected"));
+            break;
+        case WasapiRendererState::reconnecting:
+            status->setText(text("StatusReconnecting"));
+            break;
+        case WasapiRendererState::stopped:
+        default:
+            status->setText(text("StatusDisconnected"));
+            break;
+        }
+    };
+
     const auto populate_devices = [&]() {
         const QString previous_id = devices->currentData().toString();
-        const QString preferred_id = previous_id.isEmpty()
-                                         ? QString::fromUtf8(selected_device_id.c_str())
-                                         : previous_id;
+        const QString preferred_id =
+            previous_id.isEmpty() ? QString::fromUtf8(selected_device_id.c_str()) : previous_id;
 
         devices->clear();
         const auto available_devices = WasapiRenderer::enumerate_devices();
@@ -84,7 +99,10 @@ void show_settings_dialog(QWidget *parent, const std::string &active_device_id,
         devices->setEnabled(has_devices);
         buttons->button(QDialogButtonBox::Ok)->setEnabled(has_devices);
         buttons->button(QDialogButtonBox::Apply)->setEnabled(has_devices);
-        status->setText(has_devices ? text("Ready") : text("NoPlaybackDevices"));
+        if (has_devices)
+            update_status();
+        else
+            status->setText(text("NoPlaybackDevices"));
     };
 
     const auto apply_selection = [&]() -> bool {
@@ -98,7 +116,7 @@ void show_settings_dialog(QWidget *parent, const std::string &active_device_id,
         }
 
         selected_device_id = device_id;
-        status->setText(text("ApplySucceeded"));
+        update_status();
         return true;
     };
 
@@ -110,6 +128,10 @@ void show_settings_dialog(QWidget *parent, const std::string &active_device_id,
             dialog.accept();
     });
     QObject::connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+
+    QTimer status_timer(&dialog);
+    QObject::connect(&status_timer, &QTimer::timeout, &dialog, update_status);
+    status_timer.start(500);
 
     populate_devices();
     dialog.exec();

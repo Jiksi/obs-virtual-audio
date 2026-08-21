@@ -1,5 +1,5 @@
-#include <obs-module.h>
 #include <obs-frontend-api.h>
+#include <obs-module.h>
 #include <util/bmem.h>
 #include <util/platform.h>
 
@@ -21,6 +21,7 @@ constexpr char kDeviceIdKey[] = "playback_device_id";
 
 std::unique_ptr<AudioCapture> g_audio_capture;
 std::unique_ptr<WasapiRenderer> g_wasapi_renderer;
+std::string g_configured_device_id;
 
 std::string load_device_id()
 {
@@ -78,12 +79,11 @@ bool apply_device(const std::string &device_id)
         return false;
 
     if (g_wasapi_renderer && g_wasapi_renderer->running() &&
-        g_wasapi_renderer->active_device_id() == device_id) {
+        g_wasapi_renderer->target_device_id() == device_id) {
         return save_device_id(device_id);
     }
 
-    const std::string previous_device_id =
-        g_wasapi_renderer ? g_wasapi_renderer->active_device_id() : std::string{};
+    const std::string previous_device_id = g_configured_device_id;
 
     if (g_wasapi_renderer) {
         g_wasapi_renderer->stop();
@@ -92,14 +92,16 @@ bool apply_device(const std::string &device_id)
     g_audio_capture->discard_buffered_audio();
 
     if (start_output(device_id)) {
+        g_configured_device_id = device_id;
         if (!save_device_id(device_id))
             blog(LOG_WARNING, "[obs-virtual-audio] output changed but settings could not be saved");
-        blog(LOG_INFO, "[obs-virtual-audio] playback device changed to: %s",
-             g_wasapi_renderer->active_device_name().c_str());
+        blog(LOG_INFO,
+             "[obs-virtual-audio] playback target changed; renderer will reconnect if needed");
         return true;
     }
 
-    blog(LOG_ERROR, "[obs-virtual-audio] could not switch playback devices; restoring previous output");
+    blog(LOG_ERROR,
+         "[obs-virtual-audio] could not switch playback devices; restoring previous output");
     if (!previous_device_id.empty()) {
         g_audio_capture->discard_buffered_audio();
         if (!start_output(previous_device_id))
@@ -108,19 +110,19 @@ bool apply_device(const std::string &device_id)
     return false;
 }
 
+WasapiRendererState output_state()
+{
+    return g_wasapi_renderer ? g_wasapi_renderer->state() : WasapiRendererState::stopped;
+}
+
 void open_settings(void *)
 {
     QWidget *parent = static_cast<QWidget *>(obs_frontend_get_main_window());
-    const std::string active_device_id =
-        g_wasapi_renderer ? g_wasapi_renderer->active_device_id() : std::string{};
-    show_settings_dialog(parent, active_device_id, apply_device);
+    show_settings_dialog(parent, g_configured_device_id, apply_device, output_state);
 }
-}
+} // namespace
 
-MODULE_EXPORT const char *obs_module_description(void)
-{
-    return obs_module_text("Description");
-}
+MODULE_EXPORT const char *obs_module_description(void) { return obs_module_text("Description"); }
 
 bool obs_module_load(void)
 {
@@ -133,15 +135,15 @@ bool obs_module_load(void)
         return false;
     }
 
-    const std::string configured_device_id = load_device_id();
+    g_configured_device_id = load_device_id();
     bool output_started = false;
-    if (!configured_device_id.empty())
-        output_started = start_output(configured_device_id);
+    if (!g_configured_device_id.empty())
+        output_started = start_output(g_configured_device_id);
     if (!output_started)
         output_started = start_output({});
     if (!output_started) {
-        blog(LOG_WARNING,
-             "[obs-virtual-audio] WASAPI output is inactive; choose a device from Tools > OBS Virtual Audio");
+        blog(LOG_WARNING, "[obs-virtual-audio] WASAPI output is inactive; choose a device from "
+                          "Tools > OBS Virtual Audio");
     }
 
     obs_frontend_add_tools_menu_item(obs_module_text("ToolsMenu"), open_settings, nullptr);

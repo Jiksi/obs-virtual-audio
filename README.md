@@ -26,7 +26,7 @@ OBS sources
 
 ## Current status
 
-The plugin captures OBS mix 1 as 48 kHz stereo float audio and sends it to a configurable Windows playback device. On first run it automatically selects the first active device whose name contains `CABLE Input`. The WASAPI worker writes silence when capture data is temporarily unavailable.
+The plugin captures OBS mix 1 as 48 kHz stereo float audio and sends it to a configurable Windows playback device. On first run it automatically selects the first active device whose name contains `CABLE Input`. The WASAPI worker writes silence when capture data is temporarily unavailable and automatically reconnects to the selected endpoint after device removal or other WASAPI failures. Retry delays increase from 1 second to a maximum of 10 seconds.
 
 ## Windows build
 
@@ -82,7 +82,7 @@ C:\ProgramData\obs-studio\plugins\obs-virtual-audio\bin\64bit\obs-virtual-audio.
 
 Then start OBS Studio.
 
-Use **Tools -> OBS Virtual Audio** to select or change the target playback device. The selection is stored by device ID and restored the next time OBS starts.
+Use **Tools -> OBS Virtual Audio** to select or change the target playback device. The selection is stored by device ID and restored the next time OBS starts. The dialog reports the live output state as connecting, connected, reconnecting, or disconnected.
 
 Open **Help -> Log Files -> View Current Log** and search for:
 
@@ -96,4 +96,4 @@ If those messages appear and OBS remains stable while audio sources are active, 
 
 ## Next milestone
 
-Detect device removal and reconnect the WASAPI stream automatically when the selected endpoint becomes available again.
+Add automated tests and CI packaging for distributable Windows plugin archives.

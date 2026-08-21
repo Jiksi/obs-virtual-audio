@@ -20,8 +20,7 @@ using Microsoft::WRL::ComPtr;
 namespace {
 constexpr wchar_t kTargetDeviceName[] = L"CABLE Input";
 constexpr PROPERTYKEY kDeviceFriendlyName = {
-    {0xa45c254e, 0xdf1c, 0x4efd, {0x80, 0x20, 0x67, 0xd1, 0x46, 0xa8, 0x50, 0xe0}},
-    14};
+    {0xa45c254e, 0xdf1c, 0x4efd, {0x80, 0x20, 0x67, 0xd1, 0x46, 0xa8, 0x50, 0xe0}}, 14};
 
 std::string utf8_from_wide(const wchar_t *value)
 {
@@ -43,8 +42,8 @@ std::wstring wide_from_utf8(const std::string &value)
     if (value.empty())
         return {};
 
-    const int size = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, value.c_str(), -1,
-                                         nullptr, 0);
+    const int size =
+        MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, value.c_str(), -1, nullptr, 0);
     if (size <= 1)
         return {};
 
@@ -148,10 +147,7 @@ WasapiRenderer::WasapiRenderer(AudioCapture &capture, std::string target_device_
 {
 }
 
-WasapiRenderer::~WasapiRenderer()
-{
-    stop();
-}
+WasapiRenderer::~WasapiRenderer() { stop(); }
 
 bool WasapiRenderer::start()
 {
@@ -176,6 +172,7 @@ bool WasapiRenderer::start()
 
     rendered_frames_.store(0, std::memory_order_release);
     underrun_frames_.store(0, std::memory_order_release);
+    state_.store(WasapiRendererState::connecting, std::memory_order_release);
     running_.store(true, std::memory_order_release);
     thread_ = std::thread(&WasapiRenderer::run, this);
 
@@ -199,6 +196,7 @@ void WasapiRenderer::stop()
         thread_.join();
 
     running_.store(false, std::memory_order_release);
+    state_.store(WasapiRendererState::stopped, std::memory_order_release);
 
     if (audio_event_) {
         CloseHandle(static_cast<HANDLE>(audio_event_));
@@ -210,9 +208,11 @@ void WasapiRenderer::stop()
     }
 }
 
-bool WasapiRenderer::running() const noexcept
+bool WasapiRenderer::running() const noexcept { return running_.load(std::memory_order_acquire); }
+
+WasapiRendererState WasapiRenderer::state() const noexcept
 {
-    return running_.load(std::memory_order_acquire);
+    return state_.load(std::memory_order_acquire);
 }
 
 uint64_t WasapiRenderer::rendered_frames() const noexcept
@@ -225,13 +225,17 @@ uint64_t WasapiRenderer::underrun_frames() const noexcept
     return underrun_frames_.load(std::memory_order_acquire);
 }
 
-const std::string &WasapiRenderer::active_device_id() const noexcept
+const std::string &WasapiRenderer::target_device_id() const noexcept { return target_device_id_; }
+
+std::string WasapiRenderer::active_device_id() const
 {
+    std::lock_guard<std::mutex> lock(device_mutex_);
     return active_device_id_;
 }
 
-const std::string &WasapiRenderer::active_device_name() const noexcept
+std::string WasapiRenderer::active_device_name() const
 {
+    std::lock_guard<std::mutex> lock(device_mutex_);
     return active_device_name_;
 }
 
@@ -271,10 +275,9 @@ std::vector<WasapiDevice> WasapiRenderer::enumerate_devices()
     if (owns_com)
         CoUninitialize();
 
-    std::sort(result_devices.begin(), result_devices.end(),
-              [](const WasapiDevice &left, const WasapiDevice &right) {
-                  return left.name < right.name;
-              });
+    std::sort(
+        result_devices.begin(), result_devices.end(),
+        [](const WasapiDevice &left, const WasapiDevice &right) { return left.name < right.name; });
     return result_devices;
 }
 
@@ -298,160 +301,196 @@ void WasapiRenderer::run() noexcept
         return;
     }
 
-    bool initialization_reported = false;
-    ComPtr<IAudioClient> audio_client;
+    report_initialization(true);
 
-    const auto initialize_and_render = [&]() -> bool {
-        ComPtr<IMMDeviceEnumerator> enumerator;
-        HRESULT result = CoCreateInstance(__uuidof(MMDeviceEnumerator), nullptr, CLSCTX_ALL,
-                                          IID_PPV_ARGS(&enumerator));
-        if (FAILED(result)) {
-            log_hresult("creating the audio device enumerator", result);
-            return false;
-        }
+    std::string retry_device_id = target_device_id_;
+    DWORD retry_delay_ms = 1000;
+    bool first_attempt = true;
 
-        ComPtr<IMMDevice> device;
-        WasapiDevice device_details;
-        result = find_render_device(enumerator.Get(), target_device_id_, device, device_details);
-        if (FAILED(result)) {
-            if (target_device_id_.empty())
-                blog(LOG_ERROR,
-                     "[obs-virtual-audio] no active playback device containing '%ls' was found",
-                     kTargetDeviceName);
-            else
-                blog(LOG_ERROR, "[obs-virtual-audio] configured playback device is unavailable");
-            return false;
-        }
+    while (WaitForSingleObject(static_cast<HANDLE>(stop_event_), 0) != WAIT_OBJECT_0) {
+        state_.store(first_attempt ? WasapiRendererState::connecting
+                                   : WasapiRendererState::reconnecting,
+                     std::memory_order_release);
 
-        result = device->Activate(__uuidof(IAudioClient), CLSCTX_ALL, nullptr,
-                                  reinterpret_cast<void **>(audio_client.GetAddressOf()));
-        if (FAILED(result)) {
-            log_hresult("activating the WASAPI audio client", result);
-            return false;
-        }
-
-        WAVEFORMATEXTENSIBLE format{};
-        format.Format.wFormatTag = WAVE_FORMAT_EXTENSIBLE;
-        format.Format.nChannels = static_cast<WORD>(AudioCapture::kChannels);
-        format.Format.nSamplesPerSec = AudioCapture::kSampleRate;
-        format.Format.wBitsPerSample = 32;
-        format.Format.nBlockAlign = format.Format.nChannels * format.Format.wBitsPerSample / 8;
-        format.Format.nAvgBytesPerSec = format.Format.nSamplesPerSec * format.Format.nBlockAlign;
-        format.Format.cbSize = sizeof(WAVEFORMATEXTENSIBLE) - sizeof(WAVEFORMATEX);
-        format.Samples.wValidBitsPerSample = format.Format.wBitsPerSample;
-        format.dwChannelMask = SPEAKER_FRONT_LEFT | SPEAKER_FRONT_RIGHT;
-        format.SubFormat = KSDATAFORMAT_SUBTYPE_IEEE_FLOAT;
-
-        constexpr DWORD stream_flags = AUDCLNT_STREAMFLAGS_EVENTCALLBACK |
-                                       AUDCLNT_STREAMFLAGS_NOPERSIST |
-                                       AUDCLNT_STREAMFLAGS_AUTOCONVERTPCM |
-                                       AUDCLNT_STREAMFLAGS_SRC_DEFAULT_QUALITY;
-        result = audio_client->Initialize(AUDCLNT_SHAREMODE_SHARED, stream_flags, 0, 0,
-                                          &format.Format, nullptr);
-        if (FAILED(result)) {
-            log_hresult("initializing the WASAPI render stream", result);
-            return false;
-        }
-
-        result = audio_client->SetEventHandle(static_cast<HANDLE>(audio_event_));
-        if (FAILED(result)) {
-            log_hresult("setting the WASAPI render event", result);
-            return false;
-        }
-
-        UINT32 buffer_frames = 0;
-        result = audio_client->GetBufferSize(&buffer_frames);
-        if (FAILED(result)) {
-            log_hresult("querying the WASAPI buffer size", result);
-            return false;
-        }
-
-        ComPtr<IAudioRenderClient> render_client;
-        result = audio_client->GetService(IID_PPV_ARGS(&render_client));
-        if (FAILED(result)) {
-            log_hresult("creating the WASAPI render client", result);
-            return false;
-        }
-
-        BYTE *initial_buffer = nullptr;
-        result = render_client->GetBuffer(buffer_frames, &initial_buffer);
-        if (FAILED(result)) {
-            log_hresult("acquiring the initial WASAPI buffer", result);
-            return false;
-        }
-        result = render_client->ReleaseBuffer(buffer_frames, AUDCLNT_BUFFERFLAGS_SILENT);
-        if (FAILED(result)) {
-            log_hresult("releasing the initial WASAPI buffer", result);
-            return false;
-        }
-
-        result = audio_client->Start();
-        if (FAILED(result)) {
-            log_hresult("starting the WASAPI render stream", result);
-            return false;
-        }
-
-        active_device_id_ = std::move(device_details.id);
-        active_device_name_ = std::move(device_details.name);
-        blog(LOG_INFO, "[obs-virtual-audio] WASAPI output started: %s, %u Hz, stereo float",
-             active_device_name_.c_str(), AudioCapture::kSampleRate);
-        report_initialization(true);
-        initialization_reported = true;
-
-        HANDLE events[] = {static_cast<HANDLE>(stop_event_), static_cast<HANDLE>(audio_event_)};
-        while (true) {
-            const DWORD wait_result = WaitForMultipleObjects(2, events, FALSE, INFINITE);
-            if (wait_result == WAIT_OBJECT_0)
-                break;
-            if (wait_result != WAIT_OBJECT_0 + 1) {
-                blog(LOG_ERROR, "[obs-virtual-audio] waiting for WASAPI failed: error %lu",
-                     GetLastError());
-                break;
-            }
-
-            UINT32 padding = 0;
-            result = audio_client->GetCurrentPadding(&padding);
+        ComPtr<IAudioClient> audio_client;
+        const auto connect_and_render = [&]() -> bool {
+            ComPtr<IMMDeviceEnumerator> enumerator;
+            HRESULT result = CoCreateInstance(__uuidof(MMDeviceEnumerator), nullptr, CLSCTX_ALL,
+                                              IID_PPV_ARGS(&enumerator));
             if (FAILED(result)) {
-                log_hresult("querying WASAPI buffer padding", result);
-                break;
+                log_hresult("creating the audio device enumerator", result);
+                return false;
             }
 
-            const UINT32 available_frames = buffer_frames - padding;
-            if (available_frames == 0)
-                continue;
-
-            BYTE *output = nullptr;
-            result = render_client->GetBuffer(available_frames, &output);
+            ComPtr<IMMDevice> device;
+            WasapiDevice device_details;
+            result = find_render_device(enumerator.Get(), retry_device_id, device, device_details);
             if (FAILED(result)) {
-                log_hresult("acquiring the WASAPI render buffer", result);
-                break;
+                if (retry_device_id.empty())
+                    blog(LOG_ERROR,
+                         "[obs-virtual-audio] no active playback device containing '%ls' was found",
+                         kTargetDeviceName);
+                else
+                    blog(LOG_ERROR,
+                         "[obs-virtual-audio] configured playback device is unavailable");
+                return false;
             }
 
-            const size_t requested_samples =
-                static_cast<size_t>(available_frames) * AudioCapture::kChannels;
-            auto *samples = reinterpret_cast<float *>(output);
-            const size_t read_samples = capture_.read(samples, requested_samples);
-            std::fill(samples + read_samples, samples + requested_samples, 0.0f);
-
-            const uint64_t read_frames = read_samples / AudioCapture::kChannels;
-            rendered_frames_.fetch_add(read_frames, std::memory_order_relaxed);
-            underrun_frames_.fetch_add(available_frames - read_frames, std::memory_order_relaxed);
-
-            result = render_client->ReleaseBuffer(available_frames, 0);
+            result = device->Activate(__uuidof(IAudioClient), CLSCTX_ALL, nullptr,
+                                      reinterpret_cast<void **>(audio_client.GetAddressOf()));
             if (FAILED(result)) {
-                log_hresult("releasing the WASAPI render buffer", result);
-                break;
+                log_hresult("activating the WASAPI audio client", result);
+                return false;
             }
+
+            WAVEFORMATEXTENSIBLE format{};
+            format.Format.wFormatTag = WAVE_FORMAT_EXTENSIBLE;
+            format.Format.nChannels = static_cast<WORD>(AudioCapture::kChannels);
+            format.Format.nSamplesPerSec = AudioCapture::kSampleRate;
+            format.Format.wBitsPerSample = 32;
+            format.Format.nBlockAlign = format.Format.nChannels * format.Format.wBitsPerSample / 8;
+            format.Format.nAvgBytesPerSec =
+                format.Format.nSamplesPerSec * format.Format.nBlockAlign;
+            format.Format.cbSize = sizeof(WAVEFORMATEXTENSIBLE) - sizeof(WAVEFORMATEX);
+            format.Samples.wValidBitsPerSample = format.Format.wBitsPerSample;
+            format.dwChannelMask = SPEAKER_FRONT_LEFT | SPEAKER_FRONT_RIGHT;
+            format.SubFormat = KSDATAFORMAT_SUBTYPE_IEEE_FLOAT;
+
+            constexpr DWORD stream_flags =
+                AUDCLNT_STREAMFLAGS_EVENTCALLBACK | AUDCLNT_STREAMFLAGS_NOPERSIST |
+                AUDCLNT_STREAMFLAGS_AUTOCONVERTPCM | AUDCLNT_STREAMFLAGS_SRC_DEFAULT_QUALITY;
+            result = audio_client->Initialize(AUDCLNT_SHAREMODE_SHARED, stream_flags, 0, 0,
+                                              &format.Format, nullptr);
+            if (FAILED(result)) {
+                log_hresult("initializing the WASAPI render stream", result);
+                return false;
+            }
+
+            result = audio_client->SetEventHandle(static_cast<HANDLE>(audio_event_));
+            if (FAILED(result)) {
+                log_hresult("setting the WASAPI render event", result);
+                return false;
+            }
+
+            UINT32 buffer_frames = 0;
+            result = audio_client->GetBufferSize(&buffer_frames);
+            if (FAILED(result)) {
+                log_hresult("querying the WASAPI buffer size", result);
+                return false;
+            }
+
+            ComPtr<IAudioRenderClient> render_client;
+            result = audio_client->GetService(IID_PPV_ARGS(&render_client));
+            if (FAILED(result)) {
+                log_hresult("creating the WASAPI render client", result);
+                return false;
+            }
+
+            BYTE *initial_buffer = nullptr;
+            result = render_client->GetBuffer(buffer_frames, &initial_buffer);
+            if (FAILED(result)) {
+                log_hresult("acquiring the initial WASAPI buffer", result);
+                return false;
+            }
+            result = render_client->ReleaseBuffer(buffer_frames, AUDCLNT_BUFFERFLAGS_SILENT);
+            if (FAILED(result)) {
+                log_hresult("releasing the initial WASAPI buffer", result);
+                return false;
+            }
+
+            result = audio_client->Start();
+            if (FAILED(result)) {
+                log_hresult("starting the WASAPI render stream", result);
+                return false;
+            }
+
+            if (retry_device_id.empty())
+                retry_device_id = device_details.id;
+            {
+                std::lock_guard<std::mutex> lock(device_mutex_);
+                active_device_id_ = device_details.id;
+                active_device_name_ = device_details.name;
+            }
+            state_.store(WasapiRendererState::connected, std::memory_order_release);
+            blog(LOG_INFO, "[obs-virtual-audio] WASAPI output started: %s, %u Hz, stereo float",
+                 device_details.name.c_str(), AudioCapture::kSampleRate);
+
+            HANDLE events[] = {static_cast<HANDLE>(stop_event_), static_cast<HANDLE>(audio_event_)};
+            while (true) {
+                const DWORD wait_result = WaitForMultipleObjects(2, events, FALSE, INFINITE);
+                if (wait_result == WAIT_OBJECT_0)
+                    break;
+                if (wait_result != WAIT_OBJECT_0 + 1) {
+                    blog(LOG_ERROR, "[obs-virtual-audio] waiting for WASAPI failed: error %lu",
+                         GetLastError());
+                    break;
+                }
+
+                UINT32 padding = 0;
+                result = audio_client->GetCurrentPadding(&padding);
+                if (FAILED(result)) {
+                    log_hresult("querying WASAPI buffer padding", result);
+                    break;
+                }
+
+                const UINT32 available_frames = buffer_frames - padding;
+                if (available_frames == 0)
+                    continue;
+
+                BYTE *output = nullptr;
+                result = render_client->GetBuffer(available_frames, &output);
+                if (FAILED(result)) {
+                    log_hresult("acquiring the WASAPI render buffer", result);
+                    break;
+                }
+
+                const size_t requested_samples =
+                    static_cast<size_t>(available_frames) * AudioCapture::kChannels;
+                auto *samples = reinterpret_cast<float *>(output);
+                const size_t read_samples = capture_.read(samples, requested_samples);
+                std::fill(samples + read_samples, samples + requested_samples, 0.0f);
+
+                const uint64_t read_frames = read_samples / AudioCapture::kChannels;
+                rendered_frames_.fetch_add(read_frames, std::memory_order_relaxed);
+                underrun_frames_.fetch_add(available_frames - read_frames,
+                                           std::memory_order_relaxed);
+
+                result = render_client->ReleaseBuffer(available_frames, 0);
+                if (FAILED(result)) {
+                    log_hresult("releasing the WASAPI render buffer", result);
+                    break;
+                }
+            }
+
+            audio_client->Stop();
+            return true;
+        };
+
+        const bool connected_this_attempt = connect_and_render();
+        if (WaitForSingleObject(static_cast<HANDLE>(stop_event_), 0) == WAIT_OBJECT_0)
+            break;
+
+        state_.store(WasapiRendererState::reconnecting, std::memory_order_release);
+        if (connected_this_attempt)
+            retry_delay_ms = 1000;
+
+        blog(LOG_WARNING, "[obs-virtual-audio] WASAPI output unavailable; reconnecting in %lu ms",
+             retry_delay_ms);
+        const DWORD wait_result =
+            WaitForSingleObject(static_cast<HANDLE>(stop_event_), retry_delay_ms);
+        if (wait_result == WAIT_OBJECT_0)
+            break;
+        if (wait_result == WAIT_FAILED) {
+            blog(LOG_ERROR, "[obs-virtual-audio] reconnect wait failed: error %lu", GetLastError());
+            break;
         }
 
-        audio_client->Stop();
-        return true;
-    };
+        if (!connected_this_attempt)
+            retry_delay_ms = std::min<DWORD>(retry_delay_ms * 2, 10000);
+        first_attempt = false;
+    }
 
-    initialize_and_render();
-
-    if (!initialization_reported)
-        report_initialization(false);
+    state_.store(WasapiRendererState::stopped, std::memory_order_release);
 
     blog(LOG_INFO,
          "[obs-virtual-audio] WASAPI output stopped: rendered=%llu frames, underrun=%llu frames",
