@@ -47,7 +47,38 @@ $spec.version = '0.1.0'
 $spec.author = 'Jiksi'
 $spec.website = 'https://github.com/Jiksi/obs-virtual-audio'
 $spec.email = 'noreply@example.com'
+
+# Keep the plugin ABI and build dependencies aligned with the OBS release used
+# for local smoke tests. The upstream plugin template currently targets OBS 31,
+# which OBS 32 rejects as an incompatible module.
+$spec.dependencies.'obs-studio'.version = '32.2.2'
+$spec.dependencies.'obs-studio'.hashes.'windows-x64' =
+    'f15f001f1fa526405318835f44f9910046502f496ebc3a30d5296a5018b831aa'
+$spec.dependencies.prebuilt.version = '2026-07-15'
+$spec.dependencies.prebuilt.hashes.'windows-x64' =
+    '6f90e9598fa10cff5ad23cdcfae49b87868c07bf896b02cd464582b4ce2f2ba9'
+$spec.dependencies.qt6.version = '2026-07-15'
+$spec.dependencies.qt6.hashes.'windows-x64' =
+    '7c7f985711d80467bdc1795b6592275a27d5b0e5a2c7a61db1f2c1d08d6a5579'
+$spec.dependencies.qt6.debugSymbols.'windows-x64' =
+    '471d0b2191c424a520a51d064f3741084f117e1ff6ee5af1d16aabcdbacc6659'
 $spec | ConvertTo-Json -Depth 20 | Set-Content -Encoding UTF8 $buildSpecPath
+
+$presetsPath = Join-Path $Workspace 'CMakePresets.json'
+$presets = Get-Content $presetsPath -Raw | ConvertFrom-Json
+$windowsPreset = $presets.configurePresets | Where-Object { $_.name -eq 'windows-x64' }
+if (-not $windowsPreset) {
+    throw "The upstream template does not contain the expected 'windows-x64' preset."
+}
+
+$windowsPreset.generator = 'Visual Studio 18 2026'
+$windowsPreset.architecture = 'x64,version=10.0.26100.0'
+$presets | ConvertTo-Json -Depth 20 | Set-Content -Encoding UTF8 $presetsPath
+
+# A cached CMake generator cannot be changed in place. This directory only
+# contains the disposable template build tree; downloaded dependencies remain
+# cached separately under .deps.
+Remove-Item -Recurse -Force -ErrorAction SilentlyContinue (Join-Path $Workspace 'build_x64')
 
 $cmake = @'
 cmake_minimum_required(VERSION 3.28...3.30)

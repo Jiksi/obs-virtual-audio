@@ -35,7 +35,8 @@ The repository includes `scripts/build-windows.ps1`. It uses the official OBS pl
 Requirements:
 
 - Windows 10/11 x64
-- Visual Studio 2022 with **Desktop development with C++**
+- Visual Studio 2026 with **Desktop development with C++**
+- Windows 11 SDK 10.0.26100.0
 - CMake available in `PATH`
 - Git available in `PATH`
 - PowerShell 7.2+
@@ -58,15 +59,27 @@ The first build downloads the official OBS plugin template and its build depende
 release/RelWithDebInfo/
 ```
 
-The plugin DLL should be under:
+The plugin package should be under:
 
 ```text
-release/RelWithDebInfo/obs-plugins/64bit/obs-virtual-audio.dll
+release/RelWithDebInfo/obs-virtual-audio/
 ```
 
 ## Smoke test in OBS
 
-After building, copy the generated plugin layout into your OBS Studio installation (or copy the DLL and data folders to their matching OBS plugin locations), then start OBS Studio.
+After building, copy the generated plugin directory to the Windows third-party plugin location:
+
+```text
+C:\ProgramData\obs-studio\plugins\obs-virtual-audio\
+```
+
+The installed DLL should therefore be at:
+
+```text
+C:\ProgramData\obs-studio\plugins\obs-virtual-audio\bin\64bit\obs-virtual-audio.dll
+```
+
+Then start OBS Studio.
 
 Open **Help -> Log Files -> View Current Log** and search for:
 
