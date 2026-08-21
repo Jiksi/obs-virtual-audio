@@ -10,7 +10,7 @@ if ($PSVersionTable.PSVersion -lt [Version]'7.2.0') {
     throw 'PowerShell 7.2 or newer is required.'
 }
 
-foreach ($command in @('git', 'cmake')) {
+foreach ($command in @('git', 'cmake', 'curl.exe')) {
     if (-not (Get-Command $command -ErrorAction SilentlyContinue)) {
         throw "Required command '$command' was not found in PATH."
     }
@@ -40,6 +40,9 @@ Remove-Item -Recurse -Force -ErrorAction SilentlyContinue (Join-Path $Workspace 
 Copy-Item -Recurse -Force (Join-Path $ProjectRoot 'src') (Join-Path $Workspace 'src')
 Copy-Item -Recurse -Force (Join-Path $ProjectRoot 'data') (Join-Path $Workspace 'data')
 Copy-Item -Recurse -Force (Join-Path $ProjectRoot 'tests') (Join-Path $Workspace 'tests')
+$workspaceScripts = Join-Path $Workspace 'scripts'
+New-Item -ItemType Directory -Force -Path $workspaceScripts | Out-Null
+Copy-Item -Force (Join-Path $ProjectRoot 'scripts/dependency-download.ps1') $workspaceScripts
 
 $buildSpecPath = Join-Path $Workspace 'buildspec.json'
 $spec = Get-Content $buildSpecPath -Raw | ConvertFrom-Json
@@ -65,6 +68,34 @@ $spec.dependencies.qt6.hashes.'windows-x64' =
 $spec.dependencies.qt6.debugSymbols.'windows-x64' =
     '471d0b2191c424a520a51d064f3741084f117e1ff6ee5af1d16aabcdbacc6659'
 $spec | ConvertTo-Json -Depth 20 | Set-Content -Encoding UTF8 $buildSpecPath
+
+. (Join-Path $PSScriptRoot 'dependency-download.ps1')
+
+$dependenciesRoot = Join-Path $Workspace '.deps'
+$prebuilt = $spec.dependencies.prebuilt
+$qt6 = $spec.dependencies.qt6
+$obsStudio = $spec.dependencies.'obs-studio'
+$dependencyDownloads = @(
+    @{
+        Uri = "$($prebuilt.baseUrl)/$($prebuilt.version)/windows-deps-$($prebuilt.version)-x64.zip"
+        Destination = Join-Path $dependenciesRoot "windows-deps-$($prebuilt.version)-x64.zip"
+        Sha256 = $prebuilt.hashes.'windows-x64'
+    },
+    @{
+        Uri = "$($qt6.baseUrl)/$($qt6.version)/windows-deps-qt6-$($qt6.version)-x64.zip"
+        Destination = Join-Path $dependenciesRoot "windows-deps-qt6-$($qt6.version)-x64.zip"
+        Sha256 = $qt6.hashes.'windows-x64'
+    },
+    @{
+        Uri = "$($obsStudio.baseUrl)/$($obsStudio.version).zip"
+        Destination = Join-Path $dependenciesRoot "$($obsStudio.version).zip"
+        Sha256 = $obsStudio.hashes.'windows-x64'
+    }
+)
+
+foreach ($download in $dependencyDownloads) {
+    Get-VerifiedDownload @download
+}
 
 $presetsPath = Join-Path $Workspace 'CMakePresets.json'
 $presets = Get-Content $presetsPath -Raw | ConvertFrom-Json
@@ -124,6 +155,11 @@ if(BUILD_TESTING)
   target_include_directories(audio-ring-buffer-tests PRIVATE src)
   target_compile_features(audio-ring-buffer-tests PRIVATE cxx_std_17)
   add_test(NAME audio-ring-buffer COMMAND audio-ring-buffer-tests)
+  add_test(
+    NAME dependency-download-retry
+    COMMAND pwsh -NoProfile -File ${CMAKE_CURRENT_SOURCE_DIR}/tests/dependency-download-test.ps1
+            -ProjectRoot ${CMAKE_CURRENT_SOURCE_DIR}
+  )
 endif()
 '@
 Set-Content -Encoding UTF8 (Join-Path $Workspace 'CMakeLists.txt') $cmake
