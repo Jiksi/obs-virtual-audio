@@ -1,0 +1,41 @@
+name: Build Windows plugin
+
+on:
+  push:
+    branches:
+      - master
+      - main
+      - "feat/**"
+    tags:
+      - "v*"
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-build-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Windows x64 Release
+    runs-on: windows-2025-vs2026
+    timeout-minutes: 45
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Build and package plugin
+        shell: pwsh
+        run: ./scripts/package-windows.ps1 -Configuration Release
+
+      - name: Upload plugin archive
+        uses: actions/upload-artifact@v7
+        with:
+          name: obs-virtual-audio-windows-x64
+          path: dist/*.zip
+          if-no-files-found: error
+          retention-days: 14

@@ -2,6 +2,7 @@
 .vscode/
 .build/
 release/
+dist/
 build/
 build_*/
 out/

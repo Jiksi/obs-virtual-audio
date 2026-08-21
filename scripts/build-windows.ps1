@@ -36,8 +36,10 @@ Write-Host 'Preparing temporary build workspace...'
 
 Remove-Item -Recurse -Force -ErrorAction SilentlyContinue (Join-Path $Workspace 'src')
 Remove-Item -Recurse -Force -ErrorAction SilentlyContinue (Join-Path $Workspace 'data')
+Remove-Item -Recurse -Force -ErrorAction SilentlyContinue (Join-Path $Workspace 'tests')
 Copy-Item -Recurse -Force (Join-Path $ProjectRoot 'src') (Join-Path $Workspace 'src')
 Copy-Item -Recurse -Force (Join-Path $ProjectRoot 'data') (Join-Path $Workspace 'data')
+Copy-Item -Recurse -Force (Join-Path $ProjectRoot 'tests') (Join-Path $Workspace 'tests')
 
 $buildSpecPath = Join-Path $Workspace 'buildspec.json'
 $spec = Get-Content $buildSpecPath -Raw | ConvertFrom-Json
@@ -90,6 +92,7 @@ project(${_name} VERSION ${_version} LANGUAGES C CXX)
 include(compilerconfig)
 include(defaults)
 include(helpers)
+include(CTest)
 
 add_library(${CMAKE_PROJECT_NAME} MODULE)
 
@@ -115,6 +118,13 @@ target_compile_features(${CMAKE_PROJECT_NAME} PRIVATE cxx_std_17)
 target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE PLUGIN_VERSION="${_version}")
 
 set_target_properties_plugin(${CMAKE_PROJECT_NAME} PROPERTIES OUTPUT_NAME ${_name})
+
+if(BUILD_TESTING)
+  add_executable(audio-ring-buffer-tests tests/audio-ring-buffer-test.cpp src/audio-ring-buffer.cpp)
+  target_include_directories(audio-ring-buffer-tests PRIVATE src)
+  target_compile_features(audio-ring-buffer-tests PRIVATE cxx_std_17)
+  add_test(NAME audio-ring-buffer COMMAND audio-ring-buffer-tests)
+endif()
 '@
 Set-Content -Encoding UTF8 (Join-Path $Workspace 'CMakeLists.txt') $cmake
 
@@ -125,6 +135,16 @@ try {
     & (Join-Path $Workspace '.github/scripts/Build-Windows.ps1') -Target x64 -Configuration $Configuration
     if ($LASTEXITCODE -ne 0) {
         throw "OBS build helper failed with exit code $LASTEXITCODE."
+    }
+
+    cmake --build (Join-Path $Workspace 'build_x64') --config $Configuration --target audio-ring-buffer-tests
+    if ($LASTEXITCODE -ne 0) {
+        throw "Test build failed with exit code $LASTEXITCODE."
+    }
+
+    ctest --test-dir (Join-Path $Workspace 'build_x64') -C $Configuration --output-on-failure
+    if ($LASTEXITCODE -ne 0) {
+        throw "Tests failed with exit code $LASTEXITCODE."
     }
 } finally {
     $env:CI = $previousCI

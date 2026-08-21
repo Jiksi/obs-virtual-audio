@@ -54,7 +54,15 @@ For a Release build:
 pwsh -File .\scripts\build-windows.ps1 -Configuration Release
 ```
 
-The first build downloads the official OBS plugin template and its build dependencies. Build output is copied to:
+To build, validate, and create a distributable ZIP:
+
+```powershell
+pwsh -File .\scripts\package-windows.ps1
+```
+
+The archive is written to `dist/obs-virtual-audio-<version>-windows-x64.zip`. Pass `-SkipBuild` to package an existing build of the selected configuration.
+
+The first build downloads the official OBS plugin template and its build dependencies. The build also runs the audio ring buffer unit tests. Build output is copied to:
 
 ```text
 release/RelWithDebInfo/
@@ -96,4 +104,4 @@ If those messages appear and OBS remains stable while audio sources are active, 
 
 ## Next milestone
 
-Add automated tests and CI packaging for distributable Windows plugin archives.
+Add automated tests for renderer state transitions and device-loss recovery.
