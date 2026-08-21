@@ -26,7 +26,7 @@ OBS sources
 
 ## Current status
 
-The plugin currently captures OBS mix 1 as 48 kHz stereo float audio and writes it into a lock-free SPSC ring buffer. WASAPI output has not been implemented yet.
+The plugin captures OBS mix 1 as 48 kHz stereo float audio and sends it to the first active Windows playback device whose name contains `CABLE Input`. The WASAPI worker writes silence when capture data is temporarily unavailable.
 
 ## Windows build
 
@@ -40,6 +40,7 @@ Requirements:
 - CMake available in `PATH`
 - Git available in `PATH`
 - PowerShell 7.2+
+- VB-CABLE installed with an active playback endpoint containing `CABLE Input`
 
 From PowerShell 7 at the repository root:
 
@@ -86,10 +87,11 @@ Open **Help -> Log Files -> View Current Log** and search for:
 ```text
 [obs-virtual-audio] loaded (version 0.1.0)
 [obs-virtual-audio] audio capture started: mix=0, 48000 Hz, stereo float
+[obs-virtual-audio] WASAPI output started: CABLE Input ..., 48000 Hz, stereo float
 ```
 
-If those messages appear and OBS remains stable while audio sources are active, the capture-stage smoke test is successful.
+If those messages appear and OBS remains stable while audio sources are active, select the corresponding `CABLE Output` recording endpoint in the destination application and verify that its meter receives the OBS mix.
 
 ## Next milestone
 
-Implement a WASAPI render worker that reads the ring buffer and sends the captured audio to a playback endpoint such as `CABLE Input (VB-Audio Virtual Cable)`.
+Add OBS settings for choosing the target playback endpoint instead of selecting `CABLE Input` automatically.

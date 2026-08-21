@@ -12,9 +12,14 @@ add_library(${PROJECT_NAME} MODULE
     src/plugin-main.cpp
     src/audio-capture.cpp
     src/audio-ring-buffer.cpp
+    src/wasapi-renderer.cpp
 )
 
-target_link_libraries(${PROJECT_NAME} PRIVATE OBS::libobs)
+target_link_libraries(${PROJECT_NAME} PRIVATE
+    OBS::libobs
+    ole32
+    uuid
+)
 
 target_compile_definitions(${PROJECT_NAME} PRIVATE
     PLUGIN_VERSION="${PROJECT_VERSION}"

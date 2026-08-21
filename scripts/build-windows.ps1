@@ -97,7 +97,7 @@ include(helpers)
 add_library(${CMAKE_PROJECT_NAME} MODULE)
 
 find_package(libobs REQUIRED)
-target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE OBS::libobs)
+target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE OBS::libobs ole32 uuid)
 
 target_sources(
   ${CMAKE_PROJECT_NAME}
@@ -105,6 +105,7 @@ target_sources(
     src/plugin-main.cpp
     src/audio-capture.cpp
     src/audio-ring-buffer.cpp
+    src/wasapi-renderer.cpp
 )
 
 target_compile_features(${CMAKE_PROJECT_NAME} PRIVATE cxx_std_17)
@@ -139,4 +140,4 @@ Copy-Item -Recurse -Force $workspaceRelease $targetRelease
 Write-Host ''
 Write-Host 'Build complete.'
 Write-Host "Plugin package: $targetRelease"
-Write-Host 'Look for obs-virtual-audio.dll under the obs-plugins/64bit directory.'
+Write-Host 'Look for obs-virtual-audio.dll under obs-virtual-audio/bin/64bit.'
