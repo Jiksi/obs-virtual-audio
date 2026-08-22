@@ -6,8 +6,6 @@ on:
       - master
       - main
       - "feat/**"
-    tags:
-      - "v*"
   pull_request:
   workflow_dispatch:
 
@@ -35,7 +33,9 @@ jobs:
       - name: Upload plugin archive
         uses: actions/upload-artifact@v7
         with:
-          name: obs-virtual-audio-windows-x64
+          # Direct upload prevents GitHub from wrapping the package ZIP in a
+          # second ZIP file. This option requires upload-artifact v7 or newer.
           path: dist/*.zip
+          archive: false
           if-no-files-found: error
           retention-days: 14

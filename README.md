@@ -62,6 +62,10 @@ pwsh -File .\scripts\package-windows.ps1
 
 The archive is written to `dist/obs-virtual-audio-<version>-windows-x64.zip`. Pass `-SkipBuild` to package an existing build of the selected configuration.
 
+CI uploads the versioned ZIP directly, without an additional artifact ZIP, so
+it only needs to be extracted once. The same versioned package is attached to
+a GitHub Release when a `v*` tag is pushed.
+
 The first build downloads the official OBS plugin template and its build dependencies. The build also runs the audio ring buffer unit tests. Build output is copied to:
 
 ```text

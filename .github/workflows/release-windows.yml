@@ -1,0 +1,48 @@
+name: Publish Windows release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: windows-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Windows x64 Release
+    runs-on: windows-2025-vs2026
+    timeout-minutes: 45
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Build and package plugin
+        shell: pwsh
+        run: ./scripts/package-windows.ps1 -Configuration Release
+
+      - name: Publish GitHub release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $archives = @(Get-ChildItem -Path 'dist/*.zip' -File)
+          if ($archives.Count -ne 1) {
+              throw "Expected exactly one release archive, found $($archives.Count)."
+          }
+
+          $tag = $env:GITHUB_REF_NAME
+          $expectedArchive = "obs-virtual-audio-$($tag.TrimStart('v'))-windows-x64.zip"
+          if ($archives[0].Name -ne $expectedArchive) {
+              throw "Tag '$tag' does not match package '$($archives[0].Name)'. Expected '$expectedArchive'."
+          }
+
+          gh release create $tag $archives[0].FullName `
+              --verify-tag `
+              --generate-notes `
+              --title $tag
