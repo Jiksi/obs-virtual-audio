@@ -1,102 +1,101 @@
 # OBS Virtual Audio
 
-A Windows OBS Studio plugin that forwards an OBS audio mix to a selected playback endpoint such as VB-Audio Virtual Cable, so applications like TikTok Studio can consume the routed audio from the corresponding virtual recording endpoint.
-
-## MVP goal
-
-- Windows x64
-- OBS Studio plugin
-- Capture OBS audio mix/track 1
-- Forward PCM audio to a WASAPI playback device
-- Start with VB-CABLE as the primary target
-- Keep audio I/O off the OBS audio callback thread via buffering/worker processing
-
-## Planned signal flow
+OBS Virtual Audio is a Windows OBS Studio plugin that sends OBS audio Track 1
+to a playback device such as VB-CABLE. Applications such as TikTok LIVE Studio
+can then receive the complete OBS mix through the corresponding virtual
+recording device.
 
 ```text
-OBS sources
-   -> OBS audio mixer (Track 1)
-   -> raw audio callback
-   -> ring buffer
-   -> WASAPI render worker
-   -> CABLE Input (VB-Audio Virtual Cable)
-   -> CABLE Output
-   -> TikTok Studio
+OBS audio sources
+   -> OBS Track 1
+   -> OBS Virtual Audio
+   -> CABLE Input (playback device)
+   -> VB-CABLE
+   -> CABLE Output (recording device)
+   -> TikTok LIVE Studio
 ```
 
-## Current status
+## Requirements
 
-The plugin captures OBS mix 1 as 48 kHz stereo float audio and sends it to a configurable Windows playback device. On first run it automatically selects the first active device whose name contains `CABLE Input`. The WASAPI worker writes silence when capture data is temporarily unavailable, caps queued audio at 50 ms to prevent clock drift from accumulating latency, and automatically reconnects to the selected endpoint after device removal or other WASAPI failures. Retry delays increase from 1 second to a maximum of 10 seconds.
+These are the only requirements for using the prebuilt plugin:
 
-## Windows build
+- Windows 10 or Windows 11, x64
+- OBS Studio 32.2.2
+- [VB-CABLE](https://vb-audio.com/Cable/) or another active Windows playback
+  endpoint
 
-The repository includes `scripts/build-windows.ps1`. It uses the official OBS plugin template build infrastructure in a temporary `.build` workspace, so you do not need to manually prepare a libobs SDK.
+Visual Studio, CMake, the Windows SDK, Git, and PowerShell are only required
+when building the plugin from source.
 
-Requirements:
+## Install the plugin
 
-- Windows 10/11 x64
-- Visual Studio 2026 with **Desktop development with C++**
-- Windows 11 SDK 10.0.26100.0
-- CMake available in `PATH`
-- Git available in `PATH`
-- PowerShell 7.2+
-- VB-CABLE installed with an active playback endpoint containing `CABLE Input`
+1. Close OBS Studio.
+2. Download `obs-virtual-audio-0.1.0-windows-x64.zip` from the
+   [latest release](https://github.com/Jiksi/obs-virtual-audio/releases/latest).
+3. Extract the downloaded ZIP once. It contains an `obs-virtual-audio` folder.
+4. Copy that complete folder into:
 
-From PowerShell 7 at the repository root:
+   ```text
+   C:\ProgramData\obs-studio\plugins\
+   ```
 
-```powershell
-pwsh -File .\scripts\build-windows.ps1
-```
+5. Confirm that the resulting DLL path is:
 
-For a Release build:
+   ```text
+   C:\ProgramData\obs-studio\plugins\obs-virtual-audio\bin\64bit\obs-virtual-audio.dll
+   ```
 
-```powershell
-pwsh -File .\scripts\build-windows.ps1 -Configuration Release
-```
+6. Start OBS Studio.
 
-To build, validate, and create a distributable ZIP:
+Copying files into `C:\ProgramData` may require administrator permission. If
+Windows blocks the downloaded file, right-click the ZIP before extracting it,
+open **Properties**, select **Unblock**, and extract it again.
 
-```powershell
-pwsh -File .\scripts\package-windows.ps1
-```
+## Configure OBS and VB-CABLE
 
-The archive is written to `dist/obs-virtual-audio-<version>-windows-x64.zip`. Pass `-SkipBuild` to package an existing build of the selected configuration.
+1. Open **Settings -> Audio** in OBS and set **Sample Rate** to **48 kHz**.
+2. Open **Advanced Audio Properties** from the OBS Audio Mixer.
+3. Enable **Track 1** for every audio source that should be sent to TikTok.
+4. Open **Tools -> OBS Virtual Audio**.
+5. Select **CABLE Input (VB-Audio Virtual Cable)** as the playback device.
+6. Confirm that the dialog reports **Status: Connected**.
 
-CI uploads the versioned ZIP directly, without an additional artifact ZIP, so
-it only needs to be extracted once. The same versioned package is attached to
-a GitHub Release when a `v*` tag is pushed.
+The device names are intentionally opposite from the application's point of
+view:
 
-The first build downloads the official OBS plugin template and its build dependencies. The build also runs the audio ring buffer unit tests. Build output is copied to:
+- **CABLE Input** receives audio from OBS Virtual Audio.
+- **CABLE Output** exposes that audio to TikTok as a microphone.
 
-```text
-release/RelWithDebInfo/
-```
+For predictable audio timing, configure both **CABLE Input** and
+**CABLE Output** as 48,000 Hz stereo devices in Windows Sound settings.
 
-The plugin package should be under:
+## Configure TikTok LIVE Studio
 
-```text
-release/RelWithDebInfo/obs-virtual-audio/
-```
+1. Select **CABLE Output (VB-Audio Virtual Cable)** as the microphone.
+2. Disable the direct physical microphone in TikTok to avoid duplicate audio.
+   Add the physical microphone to OBS instead, so it is included in Track 1.
+3. If video is coming from OBS, start **OBS Virtual Camera** and select it as
+   the camera in TikTok LIVE Studio.
+4. Make a short TikTok recording and perform a visible hand clap to verify A/V
+   synchronization.
+5. Turn off TikTok audio monitoring after testing. Monitor playback can have
+   additional latency and is not a reliable reference for the recorded or live
+   output.
 
-## Smoke test in OBS
+Judge synchronization from a TikTok recording or viewer-side output:
 
-After building, copy the generated plugin directory to the Windows third-party plugin location:
+- If audio occurs before the matching video, add **Sync Offset** to the OBS
+  audio sources in **Advanced Audio Properties**.
+- If video occurs before the matching audio, add a **Render Delay** filter to
+  the video source.
+- Start with the measured difference and adjust in 25-50 ms steps.
+- If only TikTok monitoring is delayed but the recording is synchronized, do
+  not add either delay.
 
-```text
-C:\ProgramData\obs-studio\plugins\obs-virtual-audio\
-```
+## Verify the installation
 
-The installed DLL should therefore be at:
-
-```text
-C:\ProgramData\obs-studio\plugins\obs-virtual-audio\bin\64bit\obs-virtual-audio.dll
-```
-
-Then start OBS Studio.
-
-Use **Tools -> OBS Virtual Audio** to select or change the target playback device. The selection is stored by device ID and restored the next time OBS starts. The dialog reports the live output state as connecting, connected, reconnecting, or disconnected.
-
-Open **Help -> Log Files -> View Current Log** and search for:
+Open **Help -> Log Files -> View Current Log** in OBS and search for messages
+similar to:
 
 ```text
 [obs-virtual-audio] loaded (version 0.1.0)
@@ -104,7 +103,102 @@ Open **Help -> Log Files -> View Current Log** and search for:
 [obs-virtual-audio] WASAPI output started: CABLE Input ..., 48000 Hz, stereo float
 ```
 
-If those messages appear and OBS remains stable while audio sources are active, select the corresponding `CABLE Output` recording endpoint in the destination application and verify that its meter receives the OBS mix.
+Play audio in OBS and verify that meters move in this order:
+
+1. The source and master meters in OBS
+2. The microphone meter for `CABLE Output` in TikTok LIVE Studio
+
+## Troubleshooting
+
+### OBS Virtual Audio is missing from the Tools menu
+
+- Confirm the DLL path matches the installation path shown above.
+- Confirm that OBS Studio is the x64 build and is version 32.2.2.
+- Check the current OBS log for `[obs-virtual-audio]` or module load errors.
+- If the ZIP came from another computer, unblock it and reinstall the folder.
+
+### No playback devices are listed
+
+- Install or reinstall VB-CABLE, then restart Windows if its installer requests
+  it.
+- Confirm that **CABLE Input** is enabled under Windows playback devices.
+- Click **Refresh** in **Tools -> OBS Virtual Audio**.
+
+### Status is disconnected or reconnecting
+
+- Confirm that the selected playback device is enabled and connected.
+- Reopen **Tools -> OBS Virtual Audio**, select the device again, and apply it.
+- Avoid changing the selected device's format while OBS is running; restart OBS
+  after changing Windows audio formats.
+
+### TikTok receives no audio
+
+- Confirm that the required OBS sources are assigned to Track 1.
+- Confirm that OBS Virtual Audio reports **Status: Connected**.
+- Confirm that TikTok uses **CABLE Output**, not **CABLE Input**.
+- Keep OBS, CABLE Input, and CABLE Output at 48 kHz.
+
+### Audio is doubled or echoes
+
+- Do not enable both the physical microphone and CABLE Output in TikTok.
+- Do not capture TikTok's monitor playback back into OBS Desktop Audio.
+- Turn off TikTok audio monitoring after calibration.
+
+## Uninstall
+
+1. Close OBS Studio.
+2. Delete this folder:
+
+   ```text
+   C:\ProgramData\obs-studio\plugins\obs-virtual-audio\
+   ```
+
+VB-CABLE is installed separately and can remain installed or be removed using
+its own installer.
+
+## Build from source
+
+The repository uses the official OBS plugin template infrastructure in a
+temporary `.build` workspace. Local build requirements are:
+
+- Windows 10 or Windows 11, x64
+- Visual Studio 2026 with **Desktop development with C++**
+- MSVC x64 build tools
+- Windows 11 SDK 10.0.26100.0
+- CMake available in `PATH`
+- Git available in `PATH`
+- PowerShell 7.2 or newer
+
+From PowerShell 7 at the repository root, build the default configuration with:
+
+```powershell
+pwsh -File .\scripts\build-windows.ps1
+```
+
+Build and create a distributable Release ZIP with:
+
+```powershell
+pwsh -File .\scripts\package-windows.ps1 -Configuration Release
+```
+
+The resulting archive is written to:
+
+```text
+dist\obs-virtual-audio-<version>-windows-x64.zip
+```
+
+Pass `-SkipBuild` to `package-windows.ps1` to package an existing build of the
+selected configuration. The scripts download verified OBS and Qt dependencies,
+run the automated tests, validate the package, and prepare the OBS plugin folder
+structure.
+
+## Current implementation
+
+The plugin captures OBS Track 1 as 48 kHz stereo float audio. Audio is buffered
+outside the OBS callback thread and rendered through WASAPI. The queue is capped
+at 50 ms to prevent clock drift from accumulating latency. If the selected
+device disappears or WASAPI fails, the plugin reconnects automatically with
+retry delays from 1 to 10 seconds.
 
 ## Next milestone
 
